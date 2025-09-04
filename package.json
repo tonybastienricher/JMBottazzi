@@ -1,0 +1,26 @@
+{
+  "name": "jmbottazzi-sync",
+  "version": "1.0.0",
+  "description": "Synchronisation des produits JMBottazzi entre boutiques Shopify",
+  "type": "module",
+  "main": "indexJMBottazzi.js",
+  "scripts": {
+    "sync": "node indexJMBottazzi.js"
+  },
+  "dependencies": {
+    "@shopify/admin-api-client": "^1.0.0",
+    "csv-writer": "^1.6.0",
+    "dotenv": "^16.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "shopify",
+    "sync",
+    "miller",
+    "products"
+  ],
+  "author": "Castafiore",
+  "license": "MIT"
+}
