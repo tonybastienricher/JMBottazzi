@@ -1,0 +1,16 @@
+when:
+  event: manual
+  manual: sync-products-jmbottazzi-test
+
+steps:
+  - name: sync-products-jmbottazzi-test
+    image: node:18-alpine
+    environment:
+      CASTAFIORE_STORE_DOMAIN:
+        from_secret: castafiore_store_domain
+      CASTAFIORE_ACCESS_TOKEN:
+        from_secret: castafiore_access_token
+    commands:
+      - echo "Sync triggered by manual"
+      - npm install
+      - npm run sync
