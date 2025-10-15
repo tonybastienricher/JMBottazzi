@@ -152,18 +152,49 @@ async function compareBottazziCastafiore(productBottazzi, productsCastafiore) {
 
   // Création d'une table de hachage pour les produits Shopify indexée par sku
   const shopifyMapping = {};
+  const skuWithoutMapping = [];
+  const duplicateSkus = new Set();
+  const skuCount = {};
+
+  // Premier passage : compter les SKUs
   productsCastafiore.forEach((prod) => {
     if (prod.sku) {
-      shopifyMapping[prod.sku] = {
-        productId: prod.product.id,
-        variantId: prod.id,
-        inventoryItemId: prod.inventoryItem.id,
-        tracked: prod.inventoryItem.tracked,
-        inventoryQuantity: prod.inventoryQuantity,
-        price: prod.price,
-      };
+      skuCount[prod.sku] = (skuCount[prod.sku] || 0) + 1;
     }
   });
+
+  // Identifier les SKUs en doublon
+  Object.keys(skuCount).forEach(sku => {
+    if (skuCount[sku] > 1) {
+      duplicateSkus.add(sku);
+    }
+  });
+
+  // Deuxième passage : créer le mapping en ignorant les doublons
+  productsCastafiore.forEach((prod) => {
+    if (prod.sku) {
+      if (!duplicateSkus.has(prod.sku)) {
+        shopifyMapping[prod.sku] = {
+          productId: prod.product.id,
+          variantId: prod.id,
+          inventoryItemId: prod.inventoryItem.id,
+          tracked: prod.inventoryItem.tracked,
+          inventoryQuantity: prod.inventoryQuantity,
+          price: prod.price,
+        };
+      }
+    } else {
+      skuWithoutMapping.push({
+        id: prod.id,
+        title: prod.title,
+        productId: prod.product.id
+      });
+    }
+  });
+
+
+  // Création d'un Set pour éviter les doublons dans productToAdd
+  const skuToAdd = new Set();
 
   // Parcours des produits du JSON du revendeur
   productBottazzi.forEach((vendorProd) => {
@@ -172,6 +203,8 @@ async function compareBottazziCastafiore(productBottazzi, productsCastafiore) {
     if (sku && shopifyMapping.hasOwnProperty(sku)) {
       // Le produit existe sur Shopify, comparer stock et prix
       const shopifyProd = shopifyMapping[sku];
+
+
       if (parseInt(shopifyProd.inventoryQuantity) !== parseInt(vendorProd.stock) || parseInt(shopifyProd.price) !== parseInt(vendorProd.price)) {
         productToUpdate.push({
           productId: shopifyProd.productId,
@@ -187,8 +220,9 @@ async function compareBottazziCastafiore(productBottazzi, productsCastafiore) {
       }
       // Produit traité, on le retire de la table
       delete shopifyMapping[sku];
-    } else {
-      // Produit absent sur Shopify, à ajouter
+    } else if (sku && !skuToAdd.has(sku)) {
+      // Produit absent sur Shopify, à ajouter (vérification des doublons)
+      skuToAdd.add(sku);
       productToAdd.push({
         sku: vendorProd.sku,
         title: vendorProd.title,
@@ -204,6 +238,8 @@ async function compareBottazziCastafiore(productBottazzi, productsCastafiore) {
         mise_a_la_taille_possible: vendorProd.mise_a_la_taille_possible,
         nom_du_modele: vendorProd.nom_du_modele,
       });
+    } else if (sku && skuToAdd.has(sku)) {
+      console.log(`⚠️  Doublon détecté dans le JSON pour le SKU: ${sku} - ${vendorProd.title}`);
     }
   });
 
