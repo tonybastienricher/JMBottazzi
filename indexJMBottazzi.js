@@ -1,17 +1,237 @@
+/**
+ * Script d'indexation JMBottazzi (JSON Channable → Castafiore).
+ * Métafields castapp : property.json + resolvers, namespace castapp.
+ * Tour de doigt : 44–71 pour les bagues uniquement.
+ * Mode test : TEST_CONFIG (ENABLED, MAX_PRODUCTS_TO_TEST, SKIP_ACTUAL_UPDATES, LOG_DETAILED_DATA, LOG_METAFIELDS).
+ */
 import { createAdminApiClient } from "@shopify/admin-api-client";
 import dotenv from "dotenv";
 import fetch from "node-fetch";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
 dotenv.config();
 
-const apiVersion = "2025-01";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const apiVersion = "2025-04";
 const storeDomain = "wallis-paris.myshopify.com";
 const locationId = "gid://shopify/Location/66135490720"; // France
 const pourcentage = 0.9;
 
-const brandMetafieldDefinitionID = "gid://shopify/MetafieldDefinition/2633007431";
-const materialMetafieldDefinitionID = "gid://shopify/MetafieldDefinition/451903648";
-const stoneMetafieldDefinitionID = "gid://shopify/MetafieldDefinition/448626848";
+const MAX_MEDIA_PER_PRODUCT = 10;
+const TOUR_DE_DOIGT_MIN = 44;
+const TOUR_DE_DOIGT_MAX = 71;
+
+const TEST_CONFIG = {
+  ENABLED: false, // true = mode test activé, false = mode production
+  MAX_PRODUCTS_TO_TEST: 3, // Nombre maximum de produits à traiter en mode test
+  SKIP_ACTUAL_UPDATES: true, // true = ne pas faire les vraies mises à jour, false = faire les mises à jour
+  LOG_DETAILED_DATA: true, // true = afficher les données détaillées des produits
+  LOG_METAFIELDS: true, // en mode test : afficher les métafields castapp qui seraient envoyés
+};
+
+let properties = null;
+
+function loadProperties() {
+  if (properties) return properties;
+  const filePath = path.join(__dirname, "property.json");
+  const raw = fs.readFileSync(filePath, "utf8");
+  properties = JSON.parse(raw);
+  return properties;
+}
+
+function normalizeForMatch(str) {
+  if (typeof str !== "string") return "";
+  return str
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function resolveBrandName(text) {
+  const prop = loadProperties();
+  const normalized = normalizeForMatch(text);
+  const found = prop.product.brands.find(
+    (b) => b.active && (normalizeForMatch(b.name) === normalized || normalized.includes(normalizeForMatch(b.name)))
+  );
+  return found ? found.name : null;
+}
+
+function resolveMaterialNames(text) {
+  const prop = loadProperties();
+  const normalized = normalizeForMatch(text);
+  const found = prop.product.materials.filter(
+    (m) => m.active && normalized.includes(normalizeForMatch(m.name))
+  );
+  return found.length ? found.map((m) => m.name) : [];
+}
+
+function resolveGemNames(text) {
+  const prop = loadProperties();
+  if (!text || typeof text !== "string" || !text.trim()) return [];
+  const normalized = normalizeForMatch(text);
+  const found = prop.product.gems.filter(
+    (g) => g.active && normalized.includes(normalizeForMatch(g.name))
+  );
+  return found.length ? found.map((g) => g.name) : [];
+}
+
+function resolveConditionName(text) {
+  if (!text || typeof text !== "string" || !text.trim()) return null;
+  const prop = loadProperties();
+  const normalized = normalizeForMatch(text);
+  const found = prop.product.conditions.find(
+    (c) => c.active && (normalizeForMatch(c.name) === normalized || normalized.includes(normalizeForMatch(c.name)))
+  );
+  return found ? found.name : null;
+}
+
+function resolveGenreNames(text) {
+  if (!text || typeof text !== "string" || !text.trim()) return [];
+  const prop = loadProperties();
+  const parts = text.split(",").map((p) => p.trim()).filter(Boolean);
+  const names = [];
+  for (const part of parts) {
+    const normalized = normalizeForMatch(part);
+    const found = prop.product.genres.find(
+      (g) => g.active && (normalizeForMatch(g.name) === normalized || normalized.includes(normalizeForMatch(g.name)))
+    );
+    if (found && !names.includes(found.name)) names.push(found.name);
+  }
+  if (names.length > 0) return names;
+  const normalized = normalizeForMatch(text);
+  const found = prop.product.genres.filter(
+    (g) => g.active && normalized.includes(normalizeForMatch(g.name))
+  );
+  return found.length ? found.map((g) => g.name) : [];
+}
+
+function getModelListForType(typeName) {
+  const prop = loadProperties();
+  if (!typeName) return null;
+  const n = normalizeForMatch(String(typeName));
+  if (n.includes("bague")) return prop.product.models?.rings ?? null;
+  if (n.includes("collier")) return prop.product.models?.necklaces ?? null;
+  if (n.includes("bracelet")) return prop.product.styles?.bracelets ?? null;
+  if (n.includes("boucle") && n.includes("oreille")) return prop.product.models?.earrings ?? null;
+  if (n.includes("broche")) return prop.product.models?.broaches ?? null;
+  if (n.includes("montre")) return prop.product.models?.watches ?? null;
+  if (n.includes("pendentif")) return prop.product.styles?.pendants ?? null;
+  return null;
+}
+
+function resolveModelName(typeName, modelLabel) {
+  if (!modelLabel || typeof modelLabel !== "string" || !modelLabel.trim()) return null;
+  const list = getModelListForType(typeName);
+  if (!list || !Array.isArray(list)) return null;
+  const normalized = normalizeForMatch(modelLabel);
+  const found = list.find(
+    (m) => m.active && (normalizeForMatch(m.name) === normalized || normalized.includes(normalizeForMatch(m.name)))
+  );
+  return found ? found.name : null;
+}
+
+function getModelMetafieldKey(typeName) {
+  if (!typeName) return null;
+  const n = normalizeForMatch(String(typeName));
+  if (n.includes("bague")) return "ring_model";
+  if (n.includes("collier")) return "necklace_model";
+  if (n.includes("bracelet")) return "bracelet_model";
+  if (n.includes("boucle") && n.includes("oreille")) return "earrings_model";
+  if (n.includes("broche")) return "brooch_model";
+  if (n.includes("montre")) return "watch_model";
+  if (n.includes("pendentif")) return null;
+  return null;
+}
+
+function parseYearRange(str) {
+  if (!str || typeof str !== "string") return null;
+  const match = str.match(/(\d{4})\s*-\s*(\d{4})/) || str.match(/(\d{4})\s*-\s*(\d{2})/);
+  if (!match) return null;
+  const start = parseInt(match[1], 10);
+  let end = parseInt(match[2], 10);
+  if (end < 100) end += 1900;
+  return { start, end };
+}
+
+function resolveEraName(text) {
+  if (!text || typeof text !== "string" || !text.trim()) return null;
+  const prop = loadProperties();
+  const eras = prop.product.eras;
+  if (!eras || !Array.isArray(eras)) return null;
+  const normalizedInput = normalizeForMatch(text);
+  const exact = eras.find((e) => normalizeForMatch(e) === normalizedInput);
+  if (exact) return exact;
+  const contains = eras.find((e) => normalizeForMatch(e).includes(normalizedInput));
+  if (contains) return contains;
+  const inputRange = parseYearRange(text);
+  if (!inputRange) return null;
+  let bestEra = null;
+  let bestOverlap = 0;
+  for (const eraStr of eras) {
+    const eraRange = parseYearRange(eraStr);
+    if (!eraRange) continue;
+    const overlapStart = Math.max(inputRange.start, eraRange.start);
+    const overlapEnd = Math.min(inputRange.end, eraRange.end);
+    const overlap = Math.max(0, overlapEnd - overlapStart);
+    if (overlap > bestOverlap) {
+      bestOverlap = overlap;
+      bestEra = eraStr;
+    }
+  }
+  return bestEra;
+}
+
+/** Construit l'objet produit plat depuis un item JSON JMBottazzi (pour prefilProductMetafields castapp). */
+function buildFlatProductFromVendor(vendorProd) {
+  const text = (vendorProd.title || "") + " " + (vendorProd.description || "");
+  const productType = getType(vendorProd.title || "");
+  const rawTourDeDoigt =
+    vendorProd.taille_de_doigt != null && String(vendorProd.taille_de_doigt).trim() !== ""
+      ? parseInt(String(vendorProd.taille_de_doigt).trim(), 10)
+      : getTourDeDoigt(vendorProd.description || "");
+  const tourDeDoigt = normalizeTourDeDoigt({
+    product_type: productType,
+    type: productType,
+    tour_de_doigt: rawTourDeDoigt,
+    title: vendorProd.title,
+  });
+  const matiereText = vendorProd.matiere || text;
+  const pierreText = vendorProd.caracteristiques_des_pierres || text;
+  return {
+    sku: vendorProd.sku,
+    title: vendorProd.title,
+    description: vendorProd.description,
+    brand: resolveBrandName(text),
+    matiere: resolveMaterialNames(matiereText),
+    pierre: resolveGemNames(pierreText),
+    product_type: productType,
+    type: productType,
+    tour_de_doigt: Number.isNaN(tourDeDoigt) ? NaN : tourDeDoigt,
+    style: vendorProd.nom_du_modele || null,
+    epoque: resolveEraName(vendorProd.description || ""),
+    condition: resolveConditionName(vendorProd.description || ""),
+    genre: resolveGenreNames(vendorProd.description || ""),
+    customProductType: resolveModelName(productType, vendorProd.nom_du_modele || vendorProd.title || ""),
+  };
+}
+
+function normalizeTourDeDoigt(product) {
+  const productType = product.product_type || product.type || getType(product.title || "");
+  if (productType !== "Bagues") return NaN;
+  let valeur =
+    product.tour_de_doigt != null && product.tour_de_doigt !== ""
+      ? parseInt(product.tour_de_doigt, 10)
+      : (typeof product.tour_de_doigt === "number" ? product.tour_de_doigt : NaN);
+  if (typeof valeur !== "number" || isNaN(valeur) || valeur < TOUR_DE_DOIGT_MIN || valeur > TOUR_DE_DOIGT_MAX) {
+    return NaN;
+  }
+  return valeur;
+}
 
 // Shopify API
 const client = createAdminApiClient({
@@ -23,27 +243,86 @@ const client = createAdminApiClient({
 indexJMBottazzi();
 
 async function indexJMBottazzi() {
+  loadProperties();
+  console.log("property.json chargé");
+
   //Récupération des produits du JSON
-  const productBottazzi = await fetchAllProductsBottazzi();
-  console.log("Il y a " + productBottazzi.length + " produits dans le JSON");
+  let productBottazziRaw = await fetchAllProductsBottazzi();
+  console.log("Il y a " + productBottazziRaw.length + " produits dans le JSON");
 
   //Récupération des produits de Shopify pour le revendeur JMBottazzi
-  const productsCastafiore = await fetchAllProductsCastafiore();
+  let productsCastafiore = await fetchAllProductsCastafiore();
   console.log("Il y a " + productsCastafiore.length + " produits dans Shopify pour le revendeur JMBottazzi");
+
+  let productBottazzi = productBottazziRaw;
+  if (TEST_CONFIG.ENABLED) {
+    const testProducts = productBottazziRaw.slice(0, TEST_CONFIG.MAX_PRODUCTS_TO_TEST);
+    productBottazzi = testProducts;
+    if (testProducts.length > 0) {
+      const skuSet = new Set(testProducts.map((p) => p.sku).filter(Boolean));
+      productsCastafiore = productsCastafiore.filter((p) => skuSet.has(p.sku?.trim()));
+      console.log("🧪 MODE TEST ACTIVÉ: traitement de " + testProducts.length + " produits pour les tests");
+      console.log("   📝 SKUs de test: " + testProducts.map((p) => p.sku).filter(Boolean).join(", "));
+      console.log("   🧪 Castafiore filtré sur " + productsCastafiore.length + " produit(s) (SKUs de test)");
+      if (TEST_CONFIG.LOG_DETAILED_DATA) {
+        console.log("📊 Données détaillées des produits de test:");
+        testProducts.slice(0, 5).forEach((p, i) => {
+          const flat = buildFlatProductFromVendor(p);
+          console.log("   " + (i + 1) + ". SKU: " + p.sku + " - " + p.title + " - brand: " + flat.brand + " - type: " + flat.product_type);
+        });
+      }
+    }
+  }
 
   //Comparaison des produits
   const { productToAdd, productToUpdate, productRemovedFromCSV } = await compareBottazziCastafiore(productBottazzi, productsCastafiore);
 
+  console.log("📊 Résultats de la comparaison:");
+  console.log("   ➕ Produits à ajouter: " + productToAdd.length);
+  console.log("   🔄 Produits à mettre à jour: " + productToUpdate.length);
+  console.log("   ❌ Produits à supprimer/mettre en stock 0: " + productRemovedFromCSV.length);
+
+  if (TEST_CONFIG.ENABLED && TEST_CONFIG.SKIP_ACTUAL_UPDATES) {
+    console.log("🧪 MODE TEST: Mises à jour simulées (aucune modification réelle)");
+    console.log("   ➕ " + productToAdd.length + " produits seraient ajoutés");
+    console.log("   🔄 " + productToUpdate.length + " produits seraient mis à jour");
+    console.log("   ❌ " + productRemovedFromCSV.length + " produits seraient mis à stock 0");
+    console.log("   💡 Pour activer les vraies mises à jour, changez TEST_CONFIG.SKIP_ACTUAL_UPDATES à false");
+    console.log("--- Résumé de validation ---");
+    console.log("Intégration produits : " + productToAdd.length + " produit(s) seraient ajoutés.");
+    const addSample = productToAdd.slice(0, 3);
+    for (let i = 0; i < addSample.length; i++) {
+      const p = addSample[i];
+      const m = await prefilProductMetafields(p);
+      console.log("   Exemple " + (i + 1) + ": SKU " + p.sku + " - " + p.title + " - Prix " + p.price + "€ - Stock " + p.stock + " - métafields castapp: " + m.length + " clé(s)");
+      if (TEST_CONFIG.LOG_METAFIELDS || TEST_CONFIG.LOG_DETAILED_DATA) {
+        console.log("      Clés: " + (m.map((x) => x.key).join(", ") || "(aucune)"));
+        if (TEST_CONFIG.LOG_DETAILED_DATA) console.log(JSON.stringify(m, null, 2));
+      }
+    }
+    console.log("Sync stock : " + productToUpdate.length + " produit(s) seraient mis à jour (prix/stock/métafields).");
+    const updateSample = productToUpdate.slice(0, 2);
+    for (let i = 0; i < updateSample.length; i++) {
+      const p = updateSample[i];
+      const m = await prefilProductMetafields(p);
+      console.log("   Exemple " + (i + 1) + ": productId " + p.productId + " - métafields castapp: " + m.length + " clé(s)");
+      if (TEST_CONFIG.LOG_METAFIELDS || TEST_CONFIG.LOG_DETAILED_DATA) {
+        console.log("      Clés: " + (m.map((x) => x.key).join(", ") || "(aucune)"));
+        if (TEST_CONFIG.LOG_DETAILED_DATA) console.log(JSON.stringify(m, null, 2));
+      }
+    }
+    console.log("Métafields : les métafields castapp seraient envoyés à l'ajout et à la mise à jour.");
+    return;
+  }
+
   //Ajout des produits à Shopify
-  await addProductsToShopify(productToAdd);
-  console.log(JSON.stringify(productToAdd, null, 2));
+  if (productToAdd.length > 0) await addProductsToShopify(productToAdd);
 
   //Mise à jour des produits sur Shopify
-  await updateProductsOnShopify(productToUpdate);
-  console.log(JSON.stringify(productToUpdate, null, 2));
+  if (productToUpdate.length > 0) await updateProductsOnShopify(productToUpdate);
 
   //Mise à jour du stock des produits sur Shopify
-  await updateVariantStockRemovedFromCSV(productRemovedFromCSV);
+  if (productRemovedFromCSV.length > 0) await updateVariantStockRemovedFromCSV(productRemovedFromCSV);
 
   console.log("Produits JMBottazzi à ajouter : " + productToAdd.length);
 }
@@ -108,6 +387,7 @@ async function fetchAllProductsCastafiore() {
                 price
                 product {
                     id
+                    title
                     tags
                 }
                 inventoryItem {
@@ -176,6 +456,7 @@ async function compareBottazziCastafiore(productBottazzi, productsCastafiore) {
       if (!duplicateSkus.has(prod.sku)) {
         shopifyMapping[prod.sku] = {
           productId: prod.product.id,
+          title: prod.product.title,
           variantId: prod.id,
           inventoryItemId: prod.inventoryItem.id,
           tracked: prod.inventoryItem.tracked,
@@ -201,45 +482,49 @@ async function compareBottazziCastafiore(productBottazzi, productsCastafiore) {
     const sku = vendorProd.sku;
 
     if (sku && shopifyMapping.hasOwnProperty(sku)) {
-      // Le produit existe sur Shopify, comparer stock et prix
       const shopifyProd = shopifyMapping[sku];
+      const vendorPrice = parseInt(vendorProd.price, 10);
+      const vendorStock = parseInt(vendorProd.stock, 10);
+      const priceIsDifferent = parseInt(shopifyProd.price, 10) !== vendorPrice;
+      const inventoryIsDifferent = parseInt(shopifyProd.inventoryQuantity, 10) !== vendorStock;
+      const flat = buildFlatProductFromVendor(vendorProd);
 
-
-      if (parseInt(shopifyProd.inventoryQuantity) !== parseInt(vendorProd.stock) || parseInt(shopifyProd.price) !== parseInt(vendorProd.price)) {
-        productToUpdate.push({
-          productId: shopifyProd.productId,
-          variantId: shopifyProd.variantId,
-          inventoryItemId: shopifyProd.inventoryItemId,
-          price: parseInt(vendorProd.price),
-          stock: parseInt(vendorProd.stock),
-          tracked: shopifyProd.tracked,
-          stockDifference: parseInt(vendorProd.stock) - parseInt(shopifyProd.inventoryQuantity),
-          priceIsDifferent: parseInt(shopifyProd.price) !== parseInt(vendorProd.price),
-          inventoryIsDifferent: parseInt(shopifyProd.inventoryQuantity) !== parseInt(vendorProd.stock),
-        });
-      }
-      // Produit traité, on le retire de la table
+      productToUpdate.push({
+        productId: shopifyProd.productId,
+        title: shopifyProd.title,
+        variantId: shopifyProd.variantId,
+        inventoryItemId: shopifyProd.inventoryItemId,
+        price: vendorPrice,
+        stock: vendorStock,
+        tracked: shopifyProd.tracked,
+        stockDifference: vendorStock - parseInt(shopifyProd.inventoryQuantity, 10),
+        priceIsDifferent,
+        inventoryIsDifferent,
+        ...flat,
+      });
       delete shopifyMapping[sku];
-    } else if (sku && !skuToAdd.has(sku)) {
-      // Produit absent sur Shopify, à ajouter (vérification des doublons)
+    } else if (sku && !skuToAdd.has(sku) && !duplicateSkus.has(sku)) {
       skuToAdd.add(sku);
+      const flat = buildFlatProductFromVendor(vendorProd);
+      const mainImage = vendorProd.image_link || "";
+      const extraImages = Array.isArray(vendorProd.additional_image_link)
+        ? vendorProd.additional_image_link
+        : typeof vendorProd.additional_image_link === "string"
+          ? vendorProd.additional_image_link.split(",").map((s) => s.trim()).filter(Boolean)
+          : [];
+      const images = [mainImage, ...extraImages].filter(Boolean);
+
       productToAdd.push({
-        sku: vendorProd.sku,
-        title: vendorProd.title,
-        description: vendorProd.description,
-        price: parseInt(vendorProd.price),
-        stock: parseInt(vendorProd.stock),
-        images: vendorProd.image_link + "," + vendorProd.additional_image_link,
-        type: getType(vendorProd.title),
-        tour_de_doigt: vendorProd.tour_de_doigt != "" ? parseInt(vendorProd.tour_de_doigt) : getTourDeDoigt(vendorProd.description),
-        matiere: vendorProd.matiere,
-        pierre: vendorProd.caracteristiques_des_pierres,
-        caracteristiques_des_pierres: vendorProd.caracteristiques_des_pierres,
-        mise_a_la_taille_possible: vendorProd.mise_a_la_taille_possible,
-        nom_du_modele: vendorProd.nom_du_modele,
+        ...flat,
+        price: parseInt(vendorProd.price, 10),
+        stock: parseInt(vendorProd.stock, 10),
+        images,
+        type: flat.product_type,
       });
     } else if (sku && skuToAdd.has(sku)) {
       console.log(`⚠️  Doublon détecté dans le JSON pour le SKU: ${sku} - ${vendorProd.title}`);
+    } else if (sku && duplicateSkus.has(sku)) {
+      console.log(`🚫 SKU en doublon ignoré: ${sku} - ${vendorProd.title}`);
     }
   });
 
@@ -339,11 +624,12 @@ async function addProductToShopify(product, metafields) {
     media: getImages(product.images, product.title),
   };
 
-  if (product.type === "Bagues") {
+  const validTourDeDoigt = product.type === "Bagues" && product.tour_de_doigt != null && !Number.isNaN(product.tour_de_doigt) && product.tour_de_doigt >= TOUR_DE_DOIGT_MIN && product.tour_de_doigt <= TOUR_DE_DOIGT_MAX;
+  if (validTourDeDoigt) {
     variables.product.productOptions = [
       {
         name: "Tour de doigt",
-        values: [{ name: product.tour_de_doigt.toString() }],
+        values: [{ name: String(Math.round(product.tour_de_doigt)) }],
       },
     ];
   }
@@ -386,6 +672,8 @@ async function addProductToShopify(product, metafields) {
 //Mise à jour des produits sur Shopify
 async function updateProductsOnShopify(products) {
   console.log("Mise à jour des " + products.length + " produits sur Shopify de JMBottazzi");
+  let metafieldsSkipped = 0;
+  let metafieldsUpdated = 0;
   for (const product of products) {
     if (product.priceIsDifferent) {
       console.log("Mise à jour du prix du produit : " + product.productId);
@@ -396,6 +684,23 @@ async function updateProductsOnShopify(products) {
       console.log("Mise à jour du stock du produit : " + product.productId);
       await adjustQuantities(product);
     }
+
+    const metafields = await prefilProductMetafields(product);
+    if (metafields.length > 0) {
+      const currentMetafields = await fetchProductCastappMetafields(product.productId);
+      if (metafieldsAreEqual(metafields, currentMetafields)) {
+        metafieldsSkipped += 1;
+      } else {
+        metafieldsUpdated += 1;
+        console.log("Mise à jour des métafields du produit : " + product.productId);
+        await updateProductMetafields(product.productId, metafields);
+      }
+    } else {
+      metafieldsSkipped += 1;
+    }
+  }
+  if (metafieldsSkipped > 0 || metafieldsUpdated > 0) {
+    console.log("Métafields: " + metafieldsUpdated + " mise(s) à jour, " + metafieldsSkipped + " inchangé(s)");
   }
 }
 
@@ -513,23 +818,19 @@ async function productSetOptions(product, productId, variantId, option) {
     },
   };
 
-  if (product.type === "Bagues") {
+  const validTourDeDoigt = product.type === "Bagues" && product.tour_de_doigt != null && !Number.isNaN(product.tour_de_doigt) && product.tour_de_doigt >= TOUR_DE_DOIGT_MIN && product.tour_de_doigt <= TOUR_DE_DOIGT_MAX;
+  if (validTourDeDoigt) {
     variables.productSet.productOptions = [
       {
         name: "Tour de doigt",
         position: 1,
-        values: [
-          {
-            name: product.tour_de_doigt.toString(),
-          },
-        ],
+        values: [{ name: String(Math.round(product.tour_de_doigt)) }],
       },
     ];
-
     variables.productSet.variants[0].optionValues = [
       {
         optionName: "Tour de doigt",
-        name: product.tour_de_doigt.toString(),
+        name: String(Math.round(product.tour_de_doigt)),
       },
     ];
   } else {
@@ -711,152 +1012,214 @@ async function inventoryAdjustQuantities(product) {
  * @returns
  */
 
-//Pré-remplissage des metafields
+/** Pré-remplissage des métafields castapp (namespace castapp). */
 async function prefilProductMetafields(product) {
   const metafields = [];
+  const productType = product.type || product.product_type;
 
-  const brand = await getBrand(product.title + " " + product.description);
-
-  if (brand) {
+  if (product.brand) {
     metafields.push({
-      key: "brand",
-      namespace: "filter",
+      namespace: "castapp",
+      key: "brands",
+      type: "list.single_line_text_field",
+      value: JSON.stringify([product.brand]),
+    });
+  }
+
+  if (product.matiere && Array.isArray(product.matiere) && product.matiere.length > 0) {
+    metafields.push({
+      namespace: "castapp",
+      key: "materials",
+      type: "list.single_line_text_field",
+      value: JSON.stringify(product.matiere),
+    });
+  }
+
+  if (product.pierre && Array.isArray(product.pierre) && product.pierre.length > 0) {
+    metafields.push({
+      namespace: "castapp",
+      key: "gem_primary",
       type: "single_line_text_field",
-      value: brand,
+      value: product.pierre[0],
+    });
+    if (product.pierre.length > 1) {
+      metafields.push({
+        namespace: "castapp",
+        key: "gem_secondary",
+        type: "list.single_line_text_field",
+        value: JSON.stringify(product.pierre.slice(1)),
+      });
+    }
+  } else if (product.pierre && typeof product.pierre === "string") {
+    metafields.push({
+      namespace: "castapp",
+      key: "gem_primary",
+      type: "single_line_text_field",
+      value: product.pierre,
     });
   }
 
-  const material = await getMaterial(product.title + " " + product.description);
-
-  if (material) {
+  if (product.condition) {
     metafields.push({
-      key: "matiere",
-      namespace: "my_fields",
-      type: "list.single_line_text_field",
-      value: JSON.stringify(material),
+      namespace: "castapp",
+      key: "condition",
+      type: "single_line_text_field",
+      value: product.condition,
     });
   }
 
-  const gemme = await getGemme(product.title + " " + product.description);
-
-  if (gemme) {
+  if (product.genre && Array.isArray(product.genre) && product.genre.length > 0) {
     metafields.push({
-      key: "pierre",
-      namespace: "my_fields",
+      namespace: "castapp",
+      key: "genre",
       type: "list.single_line_text_field",
-      value: JSON.stringify(gemme),
+      value: JSON.stringify(product.genre),
+    });
+  }
+
+  if (product.style) {
+    metafields.push({
+      namespace: "castapp",
+      key: "style",
+      type: "single_line_text_field",
+      value: product.style,
+    });
+  }
+
+  if (product.epoque) {
+    metafields.push({
+      namespace: "castapp",
+      key: "era",
+      type: "single_line_text_field",
+      value: product.epoque,
+    });
+  }
+
+  const tourDeDoigt = product.tour_de_doigt != null && !Number.isNaN(product.tour_de_doigt) ? Number(product.tour_de_doigt) : NaN;
+  if (productType === "Bagues" && !Number.isNaN(tourDeDoigt) && tourDeDoigt >= TOUR_DE_DOIGT_MIN && tourDeDoigt <= TOUR_DE_DOIGT_MAX) {
+    metafields.push({
+      namespace: "castapp",
+      key: "tour_de_doigt",
+      type: "number_decimal",
+      value: String(Math.round(tourDeDoigt)),
+    });
+  }
+
+  if (product.sku) {
+    metafields.push({
+      namespace: "castapp",
+      key: "sku_seller",
+      type: "single_line_text_field",
+      value: product.sku,
+    });
+  }
+
+  const modelKey = getModelMetafieldKey(productType);
+  if (modelKey && product.customProductType) {
+    metafields.push({
+      namespace: "castapp",
+      key: modelKey,
+      type: "single_line_text_field",
+      value: product.customProductType,
     });
   }
 
   return metafields;
 }
 
-//Récupération de la marque du produit
-async function getBrand(title = "") {
-  const brands = await fetchMetafieldsValues(brandMetafieldDefinitionID);
-
-  let titleFiltered = "Non signé";
-
-  // Normalize the title
-  const normalizedTitle = title
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase();
-
-  brands.forEach((currentValue) => {
-    // Normalize the current brand name
-    const normalizedBrand = currentValue
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toLocaleLowerCase();
-
-    if (normalizedTitle.includes(normalizedBrand)) {
-      titleFiltered = currentValue;
-    }
-  });
-
-  return titleFiltered;
-}
-
-//Récupération du matériel du produit
-async function getMaterial(title = "") {
-  const materials = await fetchMetafieldsValues(materialMetafieldDefinitionID);
-
-  const material = materials.find((material) => title.toLowerCase().includes(material.toLowerCase()));
-
-  let foundMaterials = [];
-
-  for (const material of materials) {
-    if (title.toLowerCase().includes(material.toLowerCase())) {
-      foundMaterials.push(material);
-    }
-  }
-
-  return foundMaterials;
-}
-
-//Récupération de la gemme du produit
-async function getGemme(title = "") {
-  const gemmes = await fetchMetafieldsValues(stoneMetafieldDefinitionID);
-
-  let foundGemmes = [];
-
-  for (const gemme of gemmes) {
-    if (title.toLowerCase().includes(gemme.toLowerCase())) {
-      foundGemmes.push(gemme);
-    }
-  }
-
-  return foundGemmes;
-}
-
-//Récupération des valeurs des metafields
-async function fetchMetafieldsValues(metafieldDefinitionID) {
+/** Récupère les métafields castapp actuels d'un produit sur Shopify. */
+async function fetchProductCastappMetafields(productId) {
   const query = `
-    {
-        metafieldDefinition(id: "${metafieldDefinitionID}") {
-          name
-          type {
-            category
-            supportedValidations {
-              name
-              type
-            }
-            name
-          }
-          validations {
-            name
-            value
-            type
+    query getProductMetafields($id: ID!) {
+      product(id: $id) {
+        metafields(first: 50, namespace: "castapp") {
+          edges {
+            node { key value }
           }
         }
       }
-    `;
-
-  const { data, errors, extensions } = await client.request(query);
-
+    }
+  `;
+  const { data, errors } = await client.request(query, { variables: { id: productId } });
   if (errors) {
-    console.error(errors);
+    console.error("Erreur fetch métafields castapp pour " + productId + ":", JSON.stringify(errors));
     return [];
   }
+  if (!data?.product?.metafields?.edges?.length) return [];
+  return data.product.metafields.edges.map((e) => ({ key: e.node.key, value: e.node.value }));
+}
 
-  console.log(data.metafieldDefinition.name + " récupéré.es");
+function normalizeMetafieldValueForCompare(value, type) {
+  const str = typeof value === "string" ? value : JSON.stringify(value);
+  if (type === "number_decimal") {
+    const n = parseFloat(str);
+    return Number.isNaN(n) ? str : String(n);
+  }
+  if (type && type.startsWith("list.")) {
+    try {
+      return JSON.stringify(JSON.parse(str));
+    } catch {
+      return str;
+    }
+  }
+  return str;
+}
 
-  return JSON.parse(data.metafieldDefinition.validations[0].value, null, 2);
+function metafieldsAreEqual(desired, current) {
+  if (!desired || desired.length === 0) return true;
+  const currentByKey = new Map((current || []).map((m) => [m.key, m.value]));
+  for (const m of desired) {
+    const desiredVal = normalizeMetafieldValueForCompare(m.value, m.type);
+    const currentVal = currentByKey.get(m.key);
+    if (currentVal === undefined || currentVal === null) return false;
+    if (desiredVal !== normalizeMetafieldValueForCompare(currentVal, m.type)) return false;
+  }
+  return true;
+}
+
+/** Mise à jour des métafields castapp d'un produit existant. */
+async function updateProductMetafields(productId, metafields) {
+  if (!metafields || metafields.length === 0) return;
+  const operation = `
+    mutation productUpdate($input: ProductInput!) {
+      productUpdate(input: $input) {
+        product { id }
+        userErrors { field message }
+      }
+    }
+  `;
+  const variables = {
+    input: {
+      id: productId,
+      metafields: metafields.map((m) => ({
+        namespace: m.namespace,
+        key: m.key,
+        type: m.type,
+        value: typeof m.value === "string" ? m.value : JSON.stringify(m.value),
+      })),
+    },
+  };
+  const { data, errors } = await client.request(operation, { variables });
+  if (errors) {
+    console.error("Erreur mise à jour metafields:", errors);
+    return;
+  }
+  if (data?.productUpdate?.userErrors?.length > 0) {
+    console.warn("userErrors metafields:", data.productUpdate.userErrors);
+  }
 }
 
 function getImages(images, title) {
-  const imagesToAdd = [];
-
-  for (const image of images.split(",")) {
-    imagesToAdd.push({
-      alt: title,
-      mediaContentType: "IMAGE",
-      originalSource: image,
-    });
-  }
-
-  return imagesToAdd;
+  const urls = Array.isArray(images)
+    ? images.slice(0, MAX_MEDIA_PER_PRODUCT)
+    : typeof images === "string"
+      ? images.split(",").map((s) => s.trim()).filter(Boolean).slice(0, MAX_MEDIA_PER_PRODUCT)
+      : [];
+  return urls.map((url) => ({
+    alt: title,
+    mediaContentType: "IMAGE",
+    originalSource: url,
+  }));
 }
 
 function getType(title = "") {

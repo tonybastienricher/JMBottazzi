@@ -1,0 +1,367 @@
+{
+  "namespace": "castapp",
+  "ownerType": "PRODUCT",
+  "metafields": [
+    {
+      "name": "ID Castapp",
+      "key": "_id",
+      "description": "Identifiant unique du produit dans Castapp",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Marques",
+      "key": "brands",
+      "description": "Liste des marques du produit",
+      "type": "list.single_line_text_field"
+    },
+    {
+      "name": "SKU Vendeur",
+      "key": "sku_seller",
+      "description": "SKU fourni par le vendeur",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Vendeur particulier",
+      "key": "vendeur_particulier",
+      "description": "Vendeur particulier",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Condition",
+      "key": "condition",
+      "description": "Condition du produit (neuf, occasion, etc.)",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Matériaux",
+      "key": "materials",
+      "description": "Liste des matériaux utilisés",
+      "type": "list.single_line_text_field"
+    },
+    {
+      "name": "Largeur Emballage",
+      "key": "packaging_width",
+      "description": "Largeur de l'emballage en cm",
+      "type": "number_decimal"
+    },
+    {
+      "name": "Longueur Emballage",
+      "key": "packaging_length",
+      "description": "Longueur de l'emballage en cm",
+      "type": "number_decimal"
+    },
+    {
+      "name": "Hauteur Emballage",
+      "key": "packaging_height",
+      "description": "Hauteur de l'emballage en cm",
+      "type": "number_decimal"
+    },
+    {
+      "name": "Infos Supplémentaires Emballage",
+      "key": "packaging_additional_info",
+      "description": "Informations supplémentaires sur l'emballage",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Modèle",
+      "key": "model",
+      "description": "Modèle du produit",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Style",
+      "key": "style",
+      "description": "Style du produit",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Thème",
+      "key": "theme",
+      "description": "Thème du produit",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Infos Supplémentaires Spécificité",
+      "key": "specificity_additional_info",
+      "description": "Informations supplémentaires sur les spécificités",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Mise à taille possible",
+      "key": "is_resizing",
+      "description": "Mise à taille possible",
+      "type": "boolean"
+    },
+    {
+      "name": "Pierre",
+      "key": "gem_primary",
+      "description": "Pierre principale",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Pierres secondaires",
+      "key": "gem_secondary",
+      "description": "Pierres secondaires",
+      "type": "list.single_line_text_field"
+    },
+    {
+      "name": "Poinçons",
+      "key": "hallmark",
+      "description": "Poinçons",
+      "type": "list.single_line_text_field"
+    },
+    {
+      "name": "Année de fabrication",
+      "key": "year_of_manufacture",
+      "description": "Année de fabrication",
+      "type": "number_integer"
+    },
+    {
+      "name": "Époque",
+      "key": "era",
+      "description": "Époque",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Écrin d'origine",
+      "key": "has_original_box",
+      "description": "Écrin d'origine",
+      "type": "boolean"
+    },
+    {
+      "name": "Poids en or",
+      "key": "poids_or",
+      "description": "Poids en or",
+      "type": "weight"
+    },
+    {
+      "name": "Poids en argent",
+      "key": "poids_argent",
+      "description": "Poids en argent",
+      "type": "weight"
+    },
+    {
+      "name": "Millièmes",
+      "key": "milliemes",
+      "description": "Millèmes",
+      "type": "number_integer"
+    },
+    {
+      "name": "Largeur du motif",
+      "key": "largeur_du_motif",
+      "description": "Largeur du motif",
+      "type": "number_decimal"
+    },
+    {
+      "name": "Longueur du motif",
+      "key": "longueur_du_motif",
+      "description": "Longueur du motif",
+      "type": "number_decimal"
+    },
+    {
+      "name": "Hauteur du motif",
+      "key": "hauteur_du_motif",
+      "description": "Hauteur du motif",
+      "type": "number_decimal"
+    },
+    {
+      "name": "Poids diamant",
+      "key": "poids_diamant",
+      "description": "Carat du diamant principal",
+      "type": "weight"
+    },
+    {
+      "name": "Clarté du diamant",
+      "key": "diamond_clarity",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Couleur du diamant",
+      "key": "diamond_color",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Taille du diamant",
+      "key": "diamond_cut",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Poids de la pierre centrale",
+      "key": "total_gem_center_weight",
+      "type": "weight"
+    },
+    {
+      "name": "Carat Or",
+      "key": "carat_or",
+      "description": "Carat d'or",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Longueur de la chaîne",
+      "key": "longueur_de_la_chaine",
+      "description": "Longueur de la chaîne",
+      "type": "number_decimal"
+    },
+    {
+      "name": "Complication",
+      "key": "complications",
+      "description": "Complications",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Matière du bracelet",
+      "key": "matiere_du_bracelet",
+      "description": "Matière du bracelet",
+      "type": "list.single_line_text_field"
+    },
+    {
+      "name": "Calibre",
+      "key": "calibre",
+      "description": "Calibre",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Documents",
+      "key": "documents",
+      "description": "Document associés au produit",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Genre",
+      "key": "genre",
+      "description": "Genre du produit",
+      "type": "list.single_line_text_field"
+    },
+    {
+      "name": "Mouvement",
+      "key": "mouvement",
+      "description": "Mouvement du produit",
+      "type": "list.single_line_text_field"
+    },
+    {
+      "name": "Tour de poignet",
+      "key": "tour_de_poignet",
+      "description": "Tour de poignet du produit",
+      "type": "number_decimal"
+    },
+    {
+      "name": "Tour de doigt",
+      "key": "tour_de_doigt",
+      "description": "Tour de doigt",
+      "type": "number_decimal"
+    },
+    {
+      "name": "Diamètre intérieur",
+      "key": "diametre_interieur",
+      "description": "Diamètre intérieur du produit",
+      "type": "number_decimal"
+    },
+    {
+      "name": "Couleur du cadran",
+      "key": "couleur_du_cadran",
+      "description": "Couleur du cadran du produit",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Poids platine",
+      "key": "poids_platine",
+      "description": "Poids platine",
+      "type": "weight"
+    },
+    {
+      "name": "Année",
+      "key": "annee",
+      "description": "Année du produit",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Type de verre",
+      "key": "type_de_verre",
+      "description": "Type de verre",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Type de fermoir",
+      "key": "type_de_fermoir",
+      "description": "Type de fermoir",
+      "type": "list.single_line_text_field"
+    },
+    {
+      "name": "Poids",
+      "key": "poids",
+      "description": "Poids du produit",
+      "type": "weight"
+    },
+    {
+      "name": "Numéro de série",
+      "key": "numero_de_serie",
+      "description": "Numéro de série du produit",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Modèle de bague",
+      "key": "ring_model",
+      "description": "Modèle de bague",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Dimension bijou",
+      "key": "dimensions_bijou",
+      "description": "Dimension bijou",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Modèle de broche",
+      "key": "pin_model",
+      "description": "Modèle de broche",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Modèle de collier",
+      "key": "necklace_model",
+      "description": "Modèle de collier",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Modèle de bracelet",
+      "key": "bracelet_model",
+      "description": "Modèle de bracelet",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Modèle de boucle d'oreilles",
+      "key": "earrings_model",
+      "description": "Modèle de boucle d'oreilles",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Oreilles percées",
+      "key": "ears_pierced",
+      "type": "boolean"
+    },
+    {
+      "name": "Modèle de broche",
+      "key": "brooch_model",
+      "description": "Modèle de broche",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Modèle de montre",
+      "key": "watch_model",
+      "description": "Modèle de montre",
+      "type": "single_line_text_field"
+    },
+    {
+      "name": "Largeur du bracelet",
+      "key": "largeur_bracelet",
+      "description": "Largeur du bracelet",
+      "type": "number_decimal"
+    },
+    {
+      "name": "Longueur du bracelet",
+      "key": "longueur_bracelet",
+      "description": "Longueur du bracelet",
+      "type": "number_decimal"
+    }
+  ]
+}
