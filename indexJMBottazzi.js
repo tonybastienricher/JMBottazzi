@@ -546,7 +546,20 @@ async function compareBottazziCastafiore(productBottazzi, productsCastafiore) {
 async function addProductsToShopify(products) {
   for (const product of products) {
     const metafields = await prefilProductMetafields(product);
-    const { productId, variantId, option } = await addProductToShopify(product, metafields);
+    const creationResult = await addProductToShopify(product, metafields);
+
+    if (!creationResult) {
+      console.log(
+        "❌ Échec de création du produit sur Shopify, on saute le pricing/stock :",
+        product.title,
+        "SKU:",
+        product.sku,
+      );
+      // On passe au produit suivant sans faire planter tout le batch
+      continue;
+    }
+
+    const { productId, variantId, option } = creationResult;
 
     //Ajout du prix et du stock
     await productSetOptions(product, productId, variantId, option);
@@ -556,6 +569,13 @@ async function addProductsToShopify(products) {
 //Ajout d'un produit à Shopify
 async function addProductToShopify(product, metafields) {
   console.log("Ajout du produit : " + product.title);
+
+  // Normalisation défensive : on s'assure que value est toujours une string,
+  // en particulier pour les types list.* qui attendent un JSON stringifié.
+  const safeMetafields = (metafields || []).map((m) => ({
+    ...m,
+    value: typeof m.value === "string" ? m.value : JSON.stringify(m.value),
+  }));
 
   const operationCreate = `
     mutation productCreate($product: ProductCreateInput!, $media: [CreateMediaInput!]) {
@@ -619,7 +639,7 @@ async function addProductToShopify(product, metafields) {
       status: "DRAFT",
       tags: ["tomoderate", "nouveau"],
       descriptionHtml: product.description,
-      metafields: metafields,
+      metafields: safeMetafields,
     },
     media: getImages(product.images, product.title),
   };
@@ -637,8 +657,10 @@ async function addProductToShopify(product, metafields) {
   var { data, errors, extensions } = await client.request(operationCreate, { variables });
 
   if (errors) {
-    console.log(errors);
-    return;
+    console.error("❌ Erreur GraphQL productCreate pour", product.title, "SKU:", product.sku);
+    console.error(JSON.stringify(errors, null, 2));
+    console.log("Metafields envoyés :", JSON.stringify(safeMetafields, null, 2));
+    return null;
   }
 
   if (extensions.cost.throttleStatus.currentlyAvailable < 100) {
@@ -646,7 +668,10 @@ async function addProductToShopify(product, metafields) {
   }
 
   if (data.productCreate.userErrors.length > 0) {
-    console.log(data.productCreate.userErrors);
+    console.error("❌ userErrors productCreate pour", product.title, "SKU:", product.sku);
+    console.error(JSON.stringify(data.productCreate.userErrors, null, 2));
+    console.log("Metafields envoyés :", JSON.stringify(safeMetafields, null, 2));
+    return null;
   }
 
   if (data.productCreate.product.id) {
