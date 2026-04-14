@@ -16,7 +16,7 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const apiVersion = "2025-04";
+const apiVersion = "2026-04";
 const storeDomain = "wallis-paris.myshopify.com";
 const locationId = "gid://shopify/Location/66135490720"; // France
 const pourcentage = 0.9;
@@ -29,6 +29,7 @@ const TEST_CONFIG = {
   ENABLED: false, // true = mode test activé, false = mode production
   MAX_PRODUCTS_TO_TEST: 3, // Nombre maximum de produits à traiter en mode test
   SKIP_ACTUAL_UPDATES: true, // true = ne pas faire les vraies mises à jour, false = faire les mises à jour
+  FORCE_METAFIELDS_SYNC: false, // true = vérifier/mettre à jour les métafields même sans diff prix/stock
   LOG_DETAILED_DATA: true, // true = afficher les données détaillées des produits
   LOG_METAFIELDS: true, // en mode test : afficher les métafields castapp qui seraient envoyés
 };
@@ -233,6 +234,31 @@ function normalizeTourDeDoigt(product) {
   return valeur;
 }
 
+function toMoneyNumber(value) {
+  const n = Number.parseFloat(String(value));
+  if (Number.isNaN(n)) return NaN;
+  return Math.round(n * 100) / 100;
+}
+
+function toStockNumber(value) {
+  const n = Number.parseFloat(String(value));
+  if (Number.isNaN(n)) return NaN;
+  return Math.round(n);
+}
+
+function normalizeSku(value) {
+  if (value == null) return "";
+  return String(value).trim().toUpperCase();
+}
+
+function parseRuntimeFlags() {
+  const args = process.argv.slice(2);
+  return {
+    dryRun: args.includes("--dry-run"),
+    forceMetafieldsSync: args.includes("--force-metafields-sync"),
+  };
+}
+
 // Shopify API
 const client = createAdminApiClient({
   storeDomain: storeDomain,
@@ -245,6 +271,9 @@ indexJMBottazzi();
 async function indexJMBottazzi() {
   loadProperties();
   console.log("property.json chargé");
+  const runtimeFlags = parseRuntimeFlags();
+  if (runtimeFlags.dryRun) console.log("🧪 --dry-run actif: aucune modification Shopify ne sera appliquée");
+  if (runtimeFlags.forceMetafieldsSync) console.log("🧩 --force-metafields-sync actif: vérification des métafields forcée");
 
   //Récupération des produits du JSON
   let productBottazziRaw = await fetchAllProductsBottazzi();
@@ -275,18 +304,24 @@ async function indexJMBottazzi() {
   }
 
   //Comparaison des produits
-  const { productToAdd, productToUpdate, productRemovedFromCSV } = await compareBottazziCastafiore(productBottazzi, productsCastafiore);
+  const { productToAdd, productToUpdate, productRemovedFromCSV, matchedOnSku, productRemovedWithPositiveStock } = await compareBottazziCastafiore(
+    productBottazzi,
+    productsCastafiore,
+    runtimeFlags
+  );
 
   console.log("📊 Résultats de la comparaison:");
+  console.log("   🔗 SKUs matchés JSON/Shopify: " + matchedOnSku);
   console.log("   ➕ Produits à ajouter: " + productToAdd.length);
   console.log("   🔄 Produits à mettre à jour: " + productToUpdate.length);
-  console.log("   ❌ Produits à supprimer/mettre en stock 0: " + productRemovedFromCSV.length);
+  console.log("   ❌ Produits absents du JSON (total): " + productRemovedFromCSV.length);
+  console.log("   ⚠️  Produits absents avec stock > 0 (action réelle): " + productRemovedWithPositiveStock.length);
 
-  if (TEST_CONFIG.ENABLED && TEST_CONFIG.SKIP_ACTUAL_UPDATES) {
+  if ((TEST_CONFIG.ENABLED && TEST_CONFIG.SKIP_ACTUAL_UPDATES) || runtimeFlags.dryRun) {
     console.log("🧪 MODE TEST: Mises à jour simulées (aucune modification réelle)");
     console.log("   ➕ " + productToAdd.length + " produits seraient ajoutés");
     console.log("   🔄 " + productToUpdate.length + " produits seraient mis à jour");
-    console.log("   ❌ " + productRemovedFromCSV.length + " produits seraient mis à stock 0");
+    console.log("   ❌ " + productRemovedWithPositiveStock.length + " produits seraient mis à stock 0");
     console.log("   💡 Pour activer les vraies mises à jour, changez TEST_CONFIG.SKIP_ACTUAL_UPDATES à false");
     console.log("--- Résumé de validation ---");
     console.log("Intégration produits : " + productToAdd.length + " produit(s) seraient ajoutés.");
@@ -311,6 +346,22 @@ async function indexJMBottazzi() {
         if (TEST_CONFIG.LOG_DETAILED_DATA) console.log(JSON.stringify(m, null, 2));
       }
     }
+    const removedSample = productRemovedWithPositiveStock.slice(0, 5);
+    if (removedSample.length > 0) {
+      console.log("Produits absents du JSON avec stock > 0 (exemples):");
+      removedSample.forEach((p, i) => {
+        console.log(
+          "   " +
+            (i + 1) +
+            ". SKU " +
+            (p.sku || "(sans SKU)") +
+            " - stock actuel: " +
+            p.currentStock +
+            " - variantId " +
+            p.variantId
+        );
+      });
+    }
     console.log("Métafields : les métafields castapp seraient envoyés à l'ajout et à la mise à jour.");
     return;
   }
@@ -322,7 +373,7 @@ async function indexJMBottazzi() {
   if (productToUpdate.length > 0) await updateProductsOnShopify(productToUpdate);
 
   //Mise à jour du stock des produits sur Shopify
-  if (productRemovedFromCSV.length > 0) await updateVariantStockRemovedFromCSV(productRemovedFromCSV);
+  if (productRemovedWithPositiveStock.length > 0) await updateVariantStockRemovedFromCSV(productRemovedWithPositiveStock);
 
   console.log("Produits JMBottazzi à ajouter : " + productToAdd.length);
 }
@@ -425,10 +476,12 @@ async function fetchAllProductsCastafiore() {
 }
 
 //Comparaison des produits
-async function compareBottazziCastafiore(productBottazzi, productsCastafiore) {
+async function compareBottazziCastafiore(productBottazzi, productsCastafiore, runtimeFlags = {}) {
   const productToAdd = [];
   const productToUpdate = [];
   const productRemovedFromCSV = [];
+  const productRemovedWithPositiveStock = [];
+  let matchedOnSku = 0;
 
   // Création d'une table de hachage pour les produits Shopify indexée par sku
   const shopifyMapping = {};
@@ -438,8 +491,9 @@ async function compareBottazziCastafiore(productBottazzi, productsCastafiore) {
 
   // Premier passage : compter les SKUs
   productsCastafiore.forEach((prod) => {
-    if (prod.sku) {
-      skuCount[prod.sku] = (skuCount[prod.sku] || 0) + 1;
+    const normalizedSku = normalizeSku(prod.sku);
+    if (normalizedSku) {
+      skuCount[normalizedSku] = (skuCount[normalizedSku] || 0) + 1;
     }
   });
 
@@ -452,13 +506,15 @@ async function compareBottazziCastafiore(productBottazzi, productsCastafiore) {
 
   // Deuxième passage : créer le mapping en ignorant les doublons
   productsCastafiore.forEach((prod) => {
-    if (prod.sku) {
-      if (!duplicateSkus.has(prod.sku)) {
-        shopifyMapping[prod.sku] = {
+    const normalizedSku = normalizeSku(prod.sku);
+    if (normalizedSku) {
+      if (!duplicateSkus.has(normalizedSku)) {
+        shopifyMapping[normalizedSku] = {
           productId: prod.product.id,
           title: prod.product.title,
           variantId: prod.id,
           inventoryItemId: prod.inventoryItem.id,
+          sku: normalizedSku,
           tracked: prod.inventoryItem.tracked,
           inventoryQuantity: prod.inventoryQuantity,
           price: prod.price,
@@ -479,29 +535,36 @@ async function compareBottazziCastafiore(productBottazzi, productsCastafiore) {
 
   // Parcours des produits du JSON du revendeur
   productBottazzi.forEach((vendorProd) => {
-    const sku = vendorProd.sku;
+    const sku = normalizeSku(vendorProd.sku);
 
     if (sku && shopifyMapping.hasOwnProperty(sku)) {
       const shopifyProd = shopifyMapping[sku];
-      const vendorPrice = parseInt(vendorProd.price, 10);
-      const vendorStock = parseInt(vendorProd.stock, 10);
-      const priceIsDifferent = parseInt(shopifyProd.price, 10) !== vendorPrice;
-      const inventoryIsDifferent = parseInt(shopifyProd.inventoryQuantity, 10) !== vendorStock;
+      const vendorPrice = toMoneyNumber(vendorProd.price);
+      const vendorStock = toStockNumber(vendorProd.stock);
+      const shopifyPrice = toMoneyNumber(shopifyProd.price);
+      const shopifyStock = toStockNumber(shopifyProd.inventoryQuantity);
+      const priceIsDifferent = shopifyPrice !== vendorPrice;
+      const inventoryIsDifferent = shopifyStock !== vendorStock;
+      const shouldCheckMetafields = TEST_CONFIG.FORCE_METAFIELDS_SYNC || runtimeFlags.forceMetafieldsSync === true;
       const flat = buildFlatProductFromVendor(vendorProd);
+      matchedOnSku += 1;
 
-      productToUpdate.push({
-        productId: shopifyProd.productId,
-        title: shopifyProd.title,
-        variantId: shopifyProd.variantId,
-        inventoryItemId: shopifyProd.inventoryItemId,
-        price: vendorPrice,
-        stock: vendorStock,
-        tracked: shopifyProd.tracked,
-        stockDifference: vendorStock - parseInt(shopifyProd.inventoryQuantity, 10),
-        priceIsDifferent,
-        inventoryIsDifferent,
-        ...flat,
-      });
+      if (priceIsDifferent || inventoryIsDifferent || shouldCheckMetafields) {
+        productToUpdate.push({
+          productId: shopifyProd.productId,
+          title: shopifyProd.title,
+          variantId: shopifyProd.variantId,
+          inventoryItemId: shopifyProd.inventoryItemId,
+          price: vendorPrice,
+          stock: vendorStock,
+          tracked: shopifyProd.tracked,
+          stockDifference: vendorStock - shopifyStock,
+          priceIsDifferent,
+          inventoryIsDifferent,
+          shouldCheckMetafields,
+          ...flat,
+        });
+      }
       delete shopifyMapping[sku];
     } else if (sku && !skuToAdd.has(sku) && !duplicateSkus.has(sku)) {
       skuToAdd.add(sku);
@@ -516,8 +579,8 @@ async function compareBottazziCastafiore(productBottazzi, productsCastafiore) {
 
       productToAdd.push({
         ...flat,
-        price: parseInt(vendorProd.price, 10),
-        stock: parseInt(vendorProd.stock, 10),
+        price: toMoneyNumber(vendorProd.price),
+        stock: toStockNumber(vendorProd.stock),
         images,
         type: flat.product_type,
       });
@@ -535,11 +598,19 @@ async function compareBottazziCastafiore(productBottazzi, productsCastafiore) {
       productId: shopifyProd.productId,
       inventoryItemId: shopifyProd.inventoryItemId,
       variantId: shopifyProd.variantId,
-      newStock: -shopifyProd.inventoryQuantity,
+      sku,
+      currentStock: toStockNumber(shopifyProd.inventoryQuantity),
+      newStock: -toStockNumber(shopifyProd.inventoryQuantity),
     });
   });
 
-  return { productToAdd, productToUpdate, productRemovedFromCSV };
+  for (const product of productRemovedFromCSV) {
+    if (Number.isFinite(product.currentStock) && product.currentStock > 0) {
+      productRemovedWithPositiveStock.push(product);
+    }
+  }
+
+  return { productToAdd, productToUpdate, productRemovedFromCSV, matchedOnSku, productRemovedWithPositiveStock };
 }
 
 //Ajout des produits à Shopify
@@ -699,31 +770,38 @@ async function updateProductsOnShopify(products) {
   console.log("Mise à jour des " + products.length + " produits sur Shopify de JMBottazzi");
   let metafieldsSkipped = 0;
   let metafieldsUpdated = 0;
+  let priceUpdated = 0;
+  let stockUpdated = 0;
   for (const product of products) {
     if (product.priceIsDifferent) {
       console.log("Mise à jour du prix du produit : " + product.productId);
       await productVariantsBulkUpdate(product);
+      priceUpdated += 1;
     }
 
     if (product.inventoryIsDifferent) {
       console.log("Mise à jour du stock du produit : " + product.productId);
       await adjustQuantities(product);
+      stockUpdated += 1;
     }
 
-    const metafields = await prefilProductMetafields(product);
-    if (metafields.length > 0) {
-      const currentMetafields = await fetchProductCastappMetafields(product.productId);
-      if (metafieldsAreEqual(metafields, currentMetafields)) {
-        metafieldsSkipped += 1;
+    if (product.shouldCheckMetafields) {
+      const metafields = await prefilProductMetafields(product);
+      if (metafields.length > 0) {
+        const currentMetafields = await fetchProductCastappMetafields(product.productId);
+        if (metafieldsAreEqual(metafields, currentMetafields)) {
+          metafieldsSkipped += 1;
+        } else {
+          metafieldsUpdated += 1;
+          console.log("Mise à jour des métafields du produit : " + product.productId);
+          await updateProductMetafields(product.productId, metafields);
+        }
       } else {
-        metafieldsUpdated += 1;
-        console.log("Mise à jour des métafields du produit : " + product.productId);
-        await updateProductMetafields(product.productId, metafields);
+        metafieldsSkipped += 1;
       }
-    } else {
-      metafieldsSkipped += 1;
     }
   }
+  console.log("Prix: " + priceUpdated + " mise(s) à jour, Stock: " + stockUpdated + " mise(s) à jour");
   if (metafieldsSkipped > 0 || metafieldsUpdated > 0) {
     console.log("Métafields: " + metafieldsUpdated + " mise(s) à jour, " + metafieldsSkipped + " inchangé(s)");
   }
